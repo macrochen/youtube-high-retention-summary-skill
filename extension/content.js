@@ -391,7 +391,7 @@
             // 很多现代框架使用 pointer 系列事件，并且需要坐标
             const hoverEvents = ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'];
             
-            [activeLink, row, row.parentElement].forEach(el => {
+            [row, row.parentElement].forEach(el => {
                 if (el) {
                     const rect = el.getBoundingClientRect();
                     hoverEvents.forEach(type => {
