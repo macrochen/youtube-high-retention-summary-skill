@@ -39,7 +39,7 @@
                 if (btn) {
                     btn.innerHTML = '✅ 处理完成！';
                     setTimeout(() => {
-                        btn.innerHTML = '📦 批量下载并归档';
+                        btn.innerHTML = '📦 批量归档选中的对话';
                         btn.disabled = false;
                         btn.style.background = '#1a73e8';
                         document.querySelectorAll('.gemini-automator-cb').forEach(cb => cb.checked = false);
@@ -51,35 +51,45 @@
         // 持续探测并注入 UI
         setInterval(() => {
             // 找侧边栏的链接
-            const links = document.querySelectorAll('a[href*="/app/"], a[href*="/gem/"]');
-            links.forEach(link => {
-                // 排除顶部的非聊天历史链接
-                if (link.closest('header')) return;
-                
-                if (!link.querySelector('.gemini-automator-cb')) {
-                    const cb = document.createElement('input');
-                    cb.type = 'checkbox';
-                    cb.className = 'gemini-automator-cb';
-                    cb.style.cssText = 'margin-right: 12px; width: 16px; height: 16px; cursor: pointer; pointer-events: auto; z-index: 999;';
-                    // 防止点复选框导致网页跳转
-                    cb.onclick = (e) => e.stopPropagation();
-                    link.style.display = 'flex';
-                    link.style.alignItems = 'center';
-                    link.insertBefore(cb, link.firstChild);
-                }
-            });
+            const sidebarSelectors = ['[data-test-id="chat-history"]', 'nav[role="navigation"]', 'aside', 'nav'];
+            let sidebar = null;
+            for (const sel of sidebarSelectors) {
+                sidebar = document.querySelector(sel);
+                if (sidebar) break;
+            }
 
-            // 找侧边栏容器注入按钮
-            const sidebar = document.querySelector('nav, aside');
-            if (sidebar && !document.getElementById('gemini-automator-batch-btn')) {
+            if (sidebar) {
+                const links = Array.from(sidebar.querySelectorAll('a[href*="/app/"], a[href*="/gem/"]'));
+                links.forEach(link => {
+                    if (link.closest('header')) return; // 排除顶部的非聊天历史链接
+                    if (!link.querySelector('.gemini-automator-cb')) {
+                        const cb = document.createElement('input');
+                        cb.type = 'checkbox';
+                        cb.className = 'gemini-automator-cb';
+                        cb.style.cssText = 'margin-right: 12px; width: 16px; height: 16px; cursor: pointer; pointer-events: auto; z-index: 999; flex-shrink: 0;';
+                        cb.onclick = (e) => e.stopPropagation();
+                        link.style.display = 'flex';
+                        link.style.alignItems = 'center';
+                        link.insertBefore(cb, link.firstChild);
+                    }
+                });
+            }
+
+            // 使用悬浮按钮 (Floating Action Button) 避免被侧边栏的 CSS 或 React 刷新给吞掉
+            if (!document.getElementById('gemini-automator-batch-btn')) {
                 const btn = document.createElement('button');
                 btn.id = 'gemini-automator-batch-btn';
-                btn.innerHTML = '📦 批量下载并归档';
-                btn.style.cssText = 'width: 90%; margin: 10px auto; padding: 12px; background: #1a73e8; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; display: block; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);';
+                btn.innerHTML = '📦 批量归档选中的对话';
+                btn.style.cssText = 'position: fixed; bottom: 20px; left: 20px; z-index: 999999; padding: 12px 20px; background: #1a73e8; color: white; border: none; border-radius: 24px; cursor: pointer; font-weight: bold; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: all 0.3s ease;';
+                
+                // 鼠标悬停特效
+                btn.onmouseenter = () => btn.style.transform = 'scale(1.05)';
+                btn.onmouseleave = () => btn.style.transform = 'scale(1)';
+
                 btn.onclick = () => {
                     const checked = document.querySelectorAll('.gemini-automator-cb:checked');
                     if (checked.length === 0) {
-                        alert('请先勾选要归档的对话（左侧栏复选框）');
+                        alert('请先在左侧边栏勾选要归档的历史对话！');
                         return;
                     }
                     const urls = Array.from(checked).map(cb => cb.closest('a').href);
@@ -88,9 +98,7 @@
                     btn.disabled = true;
                     btn.style.background = '#888';
                 };
-                // 尽量插在顶部显眼的位置
-                const topWrapper = sidebar.querySelector('div') || sidebar;
-                topWrapper.insertBefore(btn, topWrapper.firstChild);
+                document.body.appendChild(btn);
             }
         }, 2000);
     }
