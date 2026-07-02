@@ -50,24 +50,44 @@
 
         // 持续探测并注入 UI
         setInterval(() => {
-            // 直接全图搜索侧边栏的对话历史链接，排除主内容区和顶部区域
-            const links = Array.from(document.querySelectorAll('a[href*="/app/"], a[href*="/gem/"]'));
-            links.forEach(link => {
-                // 排除顶部的非聊天历史链接和对话框里的普通链接
-                if (link.closest('header') || link.closest('main') || link.closest('message-content') || link.closest('[role="main"]')) return;
+            // 完全使用 gemini-chat-exporter 验证过绝对有效的侧边栏选择器逻辑
+            const sidebarSelectors = [
+                '[data-test-id="chat-history"]',
+                'nav[role="navigation"]',
+                '.chat-history',
+                'aside',
+                '[role="navigation"]',
+                'nav'
+            ];
+            
+            let sidebar = null;
+            for (const selector of sidebarSelectors) {
+                sidebar = document.querySelector(selector);
+                if (sidebar) break;
+            }
+            
+            if (sidebar) {
+                const chatLinks = Array.from(sidebar.querySelectorAll('a[href*="/app/"]'));
                 
-                if (!link.querySelector('.gemini-automator-cb')) {
+                chatLinks.forEach(link => {
+                    // 避免重复注入
+                    if (link.querySelector('.gemini-automator-cb')) return;
+                    
                     const cb = document.createElement('input');
                     cb.type = 'checkbox';
                     cb.className = 'gemini-automator-cb';
-                    cb.style.cssText = 'margin-right: 12px; width: 16px; height: 16px; cursor: pointer; pointer-events: auto; z-index: 999; flex-shrink: 0;';
+                    cb.style.cssText = 'margin-right: 8px; z-index: 999; position: relative; width: 16px; height: 16px; cursor: pointer; flex-shrink: 0;';
+                    
                     // 防止点复选框导致网页跳转
-                    cb.onclick = (e) => e.stopPropagation();
+                    cb.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                    });
+                    
                     link.style.display = 'flex';
                     link.style.alignItems = 'center';
-                    link.insertBefore(cb, link.firstChild);
-                }
-            });
+                    link.prepend(cb);
+                });
+            }
 
             // 使用悬浮按钮 (Floating Action Button) 避免被侧边栏的 CSS 或 React 刷新给吞掉
             if (!document.getElementById('gemini-automator-batch-btn')) {
