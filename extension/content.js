@@ -5,28 +5,26 @@
 
     const urlParams = new URLSearchParams(window.location.search);
     const autoPrompt = urlParams.get('auto_prompt');
-    const isBatchSync = urlParams.get('batch_sync') === 'true';
 
-    // 如果是通过批量任务后台打开的隐藏标签页，走这里：
-    if (isBatchSync) {
-        // 清理 URL 栏看着干净点（虽然是隐藏的）
-        const cleanUrl = window.location.origin + window.location.pathname;
-        window.history.replaceState({}, document.title, cleanUrl);
-        waitForChatAndProcess();
-        return;
-    }
+    // 检查是否是被后台批量任务打开的隐藏标签页
+    chrome.runtime.sendMessage({ action: "checkExtractionStatus" }, (response) => {
+        if (response && response.shouldExtract) {
+            waitForChatAndProcess();
+            return;
+        }
 
-    // 如果是通过 Python 调度自动唤起的生成任务，走这里：
-    if (autoPrompt) {
-        const cleanUrl = window.location.origin + window.location.pathname;
-        window.history.replaceState({}, document.title, cleanUrl);
-        handleAutoPromptTask(autoPrompt);
-        return;
-    }
+        // 如果是通过 Python 调度自动唤起的生成任务，走这里：
+        if (autoPrompt) {
+            const cleanUrl = window.location.origin + window.location.pathname;
+            window.history.replaceState({}, document.title, cleanUrl);
+            handleAutoPromptTask(autoPrompt);
+            return;
+        }
 
-    // 如果既不是自动生成，也不是批量后台，那这就是用户正常浏览的页面。
-    // 我们在这里注入 UI 供用户手动发起批量任务。
-    injectBatchUI();
+        // 如果既不是自动生成，也不是批量后台，那这就是用户正常浏览的页面。
+        // 我们在这里注入 UI 供用户手动发起批量任务。
+        injectBatchUI();
+    });
 
     // ==========================================
     // 逻辑一：批量注入侧边栏 UI
@@ -129,9 +127,8 @@
 
         let checkInterval = setInterval(() => {
             const responseBlocks = Array.from(document.querySelectorAll('message-content, .message-content, .model-response-text, [data-test-id="model-response"], div[class*="message-content"]'));
-            const skeletons = document.querySelectorAll('.skeleton-loader, [role="progressbar"], .loading');
 
-            if (responseBlocks.length > 0 && skeletons.length === 0) {
+            if (responseBlocks.length > 0) {
                 const lastBlock = responseBlocks[responseBlocks.length - 1];
                 const currentText = lastBlock.innerText || lastBlock.textContent;
                 const currentLength = currentText.length;
@@ -357,7 +354,8 @@
             const btns = Array.from(document.querySelectorAll('button[role="menuitem"], li[role="menuitem"], [role="menu"] button, [role="menu"] li, [data-test-id*="notebook"]'));
             for (let i = btns.length - 1; i >= 0; i--) {
                 const b = btns[i];
-                if (isVisible(b) && (b.textContent.includes('笔记本') || b.textContent.includes('notebook') || b.textContent.includes('Notebook') || b.textContent.includes('Save')) && !b.closest('nav') && !b.closest('aside')) {
+                // 后台标签页可能无法精准判断 isVisible，只要出现在 DOM 中并且文本符合即可
+                if ((b.textContent.includes('笔记本') || b.textContent.includes('notebook') || b.textContent.includes('Notebook') || b.textContent.includes('Save')) && !b.closest('nav') && !b.closest('aside')) {
                     return b;
                 }
             }
@@ -373,7 +371,7 @@
             const items = Array.from(document.querySelectorAll('button, li, [role="menuitem"], [role="option"], span'));
             for (let i = items.length - 1; i >= 0; i--) {
                 const b = items[i];
-                if (isVisible(b) && b.textContent.toLowerCase().includes(notebookName.toLowerCase()) && !b.closest('nav') && !b.closest('aside')) {
+                if (b.textContent.toLowerCase().includes(notebookName.toLowerCase()) && !b.closest('nav') && !b.closest('aside')) {
                     return b;
                 }
             }
@@ -386,7 +384,7 @@
         await new Promise(r => setTimeout(r, 400));
         
         const saveBtn = Array.from(document.querySelectorAll('button')).find(b =>
-            isVisible(b) && (b.textContent.includes('保存') || b.textContent.includes('Save') || b.textContent.includes('完成') || b.textContent.includes('Done')) && b.closest('[role="dialog"], dialog')
+            (b.textContent.includes('保存') || b.textContent.includes('Save') || b.textContent.includes('完成') || b.textContent.includes('Done')) && b.closest('[role="dialog"], dialog')
         );
         if (saveBtn) {
             simulateFullClick(saveBtn);

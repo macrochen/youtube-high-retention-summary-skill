@@ -2,9 +2,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "downloadMarkdown") {
     const { text, filename } = message;
     
-    // In Service Worker, we can use Data URI
+    // Safely encode to base64 avoiding call stack size limits and handling UTF-8 properly
     const utf8Bytes = new TextEncoder().encode(text);
-    const base64 = btoa(String.fromCharCode(...utf8Bytes));
+    const binString = Array.from(utf8Bytes, (byte) => String.fromCharCode(byte)).join("");
+    const base64 = btoa(binString);
     const url = 'data:text/markdown;charset=utf-8;base64,' + base64;
 
     chrome.downloads.download({
@@ -12,32 +13,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       filename: `youtube-summeries/${filename}.md`,
       saveAs: false
     });
+    sendResponse({ success: true });
   } else if (message.action === "closeTab") {
     if (sender.tab && sender.tab.id) {
-      chrome.tabs.remove(sender.tab.id);
+      chrome.tabs.remove(sender.tab.id).catch(() => {});
     }
+    sendResponse({ success: true });
   } else if (message.action === "startBatchSync") {
     processBatchUrls(message.urls, sender.tab.id);
+    sendResponse({ success: true });
+  } else if (message.action === "checkExtractionStatus") {
+    if (sender.tab && extractionTabs.has(sender.tab.id)) {
+      sendResponse({ shouldExtract: true });
+    } else {
+      sendResponse({ shouldExtract: false });
+    }
   }
+  return true; // Keep message channel open for async responses if needed
 });
 
 let isBatching = false;
+const extractionTabs = new Set();
 
 async function processBatchUrls(urls, originalTabId) {
   if (isBatching) return;
   isBatching = true;
   try {
     for (const url of urls) {
-      const batchUrl = new URL(url);
-      batchUrl.searchParams.set('batch_sync', 'true');
-      
-      const tab = await chrome.tabs.create({ url: batchUrl.href, active: false });
+      const tab = await chrome.tabs.create({ url: url, active: false });
+      extractionTabs.add(tab.id);
       
       // Wait for it to close
       await new Promise(resolve => {
         const listener = (tabId, removeInfo) => {
           if (tabId === tab.id) {
             chrome.tabs.onRemoved.removeListener(listener);
+            extractionTabs.delete(tab.id);
             resolve();
           }
         };
@@ -46,6 +57,7 @@ async function processBatchUrls(urls, originalTabId) {
         // Timeout safeguard
         setTimeout(() => {
           chrome.tabs.onRemoved.removeListener(listener);
+          extractionTabs.delete(tab.id);
           chrome.tabs.remove(tab.id).catch(() => {});
           resolve();
         }, 30000); // 30s timeout per tab max
