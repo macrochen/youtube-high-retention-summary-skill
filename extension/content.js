@@ -152,11 +152,20 @@
                 }
             }
             
-            // 保底超时机制：如果 30 秒还没加载完，大概率真卡死了
-            if (totalWaitMs >= 30000) {
+            // 保底超时机制：如果在 15 秒内还没有加载出来内容，尝试自动刷新网页一次
+            if (totalWaitMs >= 15000) {
                 clearInterval(checkInterval);
-                console.error("❌ 等待聊天内容超时 (30s)，可能此对话为空、网络太慢或已失效");
-                chrome.runtime.sendMessage({action: "closeTab"});
+                let reloads = parseInt(sessionStorage.getItem('gemini_automator_reloads') || '0');
+                
+                if (reloads < 2) {
+                    console.log(`🔄 页面加载似乎卡死了，正在尝试第 ${reloads + 1} 次自动刷新...`);
+                    sessionStorage.setItem('gemini_automator_reloads', (reloads + 1).toString());
+                    window.location.reload();
+                } else {
+                    console.error("❌ 多次尝试刷新后依然超时，可能此对话为空、网络太慢或已失效");
+                    sessionStorage.removeItem('gemini_automator_reloads'); // 清理状态
+                    chrome.runtime.sendMessage({action: "closeTab"});
+                }
             }
         }, 1000);
     }
