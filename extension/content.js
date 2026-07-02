@@ -279,7 +279,7 @@
         try {
             await moveCurrentToNotebook('youtube-summeries');
         } catch (e) {
-            console.error("❌ 归档报错详情:", e);
+            console.error("❌ 归档过程发生致命错误:", e.message, e);
         }
 
         // 无论是哪种任务，都发命令关掉自己
@@ -383,7 +383,10 @@
             return links[0];
         }, 5000);
 
-        if (!row) throw new Error('在侧边栏找不到任何对话条目');
+        if (!row) {
+            console.error("[归档报错] 在侧边栏找不到任何对话条目。当前 URL:", window.location.href);
+            throw new Error('在侧边栏找不到任何对话条目');
+        }
         console.log(`[归档追踪 2] 找到侧边栏元素，准备模拟悬停并寻找三个点菜单`);
 
         // 使用 waitFor 持续尝试 Hover 并寻找按钮，因为 React 渲染菜单有延迟
@@ -416,7 +419,10 @@
             return btns.pop() || null;
         }, 8000);
 
-        if (!menuButton) throw new Error('持续 8 秒仍找不到侧边栏的三个点菜单按钮');
+        if (!menuButton) {
+            console.error("[归档报错] 持续 8 秒仍找不到侧边栏的三个点菜单按钮。定位的 row 元素:", row);
+            throw new Error('持续 8 秒仍找不到侧边栏的三个点菜单按钮');
+        }
 
         menuButton.style.visibility = 'visible';
         menuButton.style.opacity = '1';
@@ -436,7 +442,10 @@
             }
             return null;
         }, 3000);
-        if (!addOption) throw new Error('在弹出菜单里没找到"笔记本"选项');
+        if (!addOption) {
+            console.error("[归档报错] 在弹出菜单里没找到'笔记本'选项。可能的原因：账号不支持 Notebook，或者菜单结构已改变。");
+            throw new Error('在弹出菜单里没找到"笔记本"选项');
+        }
         simulateFullClick(addOption);
 
         console.log(`[归档追踪 4] 已点击笔记本选项，寻找指定笔记本：${notebookName}`);
@@ -452,7 +461,10 @@
             }
             return null;
         }, 3000);
-        if (!notebookOption) throw new Error(`找不到名为 ${notebookName} 的笔记本`);
+        if (!notebookOption) {
+            console.error(`[归档报错] 找不到名为 ${notebookName} 的笔记本。请确保已提前在侧边栏创建了该 Notebook。`);
+            throw new Error(`找不到名为 ${notebookName} 的笔记本`);
+        }
         simulateFullClick(notebookOption);
         console.log(`[归档追踪 5] 找到并点击了目标笔记本 ${notebookName}`);
 
