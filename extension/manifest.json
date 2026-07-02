@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini YouTube Summary Automator",
+  "version": "13.0",
+  "description": "Automate Gemini YouTube Summary workflow with native download and sidebar moving.",
+  "permissions": ["downloads"],
+  "host_permissions": ["https://gemini.google.com/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://gemini.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ]
+}
