@@ -30,22 +30,6 @@
     // 逻辑一：批量注入侧边栏 UI
     // ==========================================
     function injectBatchUI() {
-        // 监听后台完成消息
-        chrome.runtime.onMessage.addListener((message) => {
-            if (message.action === "batchSyncDone") {
-                const btn = document.getElementById('gemini-automator-batch-btn');
-                if (btn) {
-                    btn.innerHTML = '✅ 处理完成！';
-                    setTimeout(() => {
-                        btn.innerHTML = '📦 批量归档选中的对话';
-                        btn.style.pointerEvents = 'auto';
-                        btn.style.background = '#1a73e8';
-                        document.querySelectorAll('.gemini-automator-cb').forEach(cb => cb.checked = false);
-                    }, 3000);
-                }
-            }
-        });
-
         // 持续探测并注入 UI
         setInterval(() => {
             // 完全使用 gemini-chat-exporter 验证过绝对有效的侧边栏选择器逻辑
@@ -134,7 +118,57 @@
                             btn.style.background = '#5f6368';
                             btn.style.pointerEvents = 'none';
 
-                            chrome.runtime.sendMessage({ action: "startBatchSync", urls: urls });
+                            for (let i = 0; i < urls.length; i++) {
+                                const url = urls[i];
+                                btn.innerHTML = `⏳ 处理中 (${i + 1}/${urls.length})...`;
+                                console.log(`[主控室] 开始处理: ${url}`);
+                                
+                                try {
+                                    // 1. 发送消息给后台，打开一个隐藏标签页只负责下载 Markdown
+                                    const extractionSuccess = await new Promise(resolve => {
+                                        chrome.runtime.sendMessage({ action: "startExtractionTab", url: url }, response => {
+                                            if (response && response.success) {
+                                                console.log("[主控室] 后台提取标签页已启动");
+                                            }
+                                        });
+                                        
+                                        // 等待 extractionDone 消息
+                                        const listener = (msg) => {
+                                            if (msg.action === "extractionDone" && msg.url === url) {
+                                                chrome.runtime.onMessage.removeListener(listener);
+                                                resolve(true);
+                                            }
+                                        };
+                                        chrome.runtime.onMessage.addListener(listener);
+                                        
+                                        // 超时兜底 60s
+                                        setTimeout(() => {
+                                            chrome.runtime.onMessage.removeListener(listener);
+                                            console.error("[主控室] 下载任务超时");
+                                            resolve(false);
+                                        }, 60000);
+                                    });
+
+                                    // 2. 下载完成后，在当前主页面进行归档操作
+                                    if (extractionSuccess) {
+                                        console.log(`[主控室] 下载完成，开始在本页面进行归档: ${url}`);
+                                        await moveSpecificUrlToNotebook(url, 'youtube-summeries');
+                                    }
+                                } catch(e) {
+                                    console.error(`[主控室] 处理 ${url} 失败:`, e);
+                                }
+                                
+                                // 缓冲间隔
+                                await new Promise(r => setTimeout(r, 2000));
+                            }
+                            
+                            btn.innerHTML = '✅ 全部处理完成！';
+                            setTimeout(() => {
+                                btn.innerHTML = '📦 批量归档选中的对话';
+                                btn.style.pointerEvents = 'auto';
+                                btn.style.background = '#1a73e8';
+                                document.querySelectorAll('.gemini-automator-cb').forEach(cb => cb.checked = false);
+                            }, 3000);
                         };
 
                         btnContainer.appendChild(btn);
@@ -276,13 +310,8 @@
             console.error("❌ MD 下载报错:", e);
         }
 
-        try {
-            await moveCurrentToNotebook('youtube-summeries');
-        } catch (e) {
-            console.error("❌ 归档过程发生致命错误:", e.message, e);
-        }
-
-        // 无论是哪种任务，都发命令关掉自己
+        // 提取模式下，不再在此页面进行归档操作，主控页面会接管归档。
+        // 直接关闭自己，触发主控页面的 extractionDone 事件。
         setTimeout(() => {
             chrome.runtime.sendMessage({action: "closeTab"});
         }, 1500);
@@ -358,8 +387,8 @@
         });
     }
 
-    async function moveCurrentToNotebook(notebookName) {
-        console.log(`[归档追踪 1] 寻找侧边栏当前对话... 当前路径=${window.location.pathname}`);
+    async function moveSpecificUrlToNotebook(url, notebookName) {
+        console.log(`[归档追踪 1] 寻找侧边栏指定的对话... URL=${url}`);
         
         // 【防闪退保护】确保侧边栏已展开
         const sidebarToggleButton = document.querySelector('button[aria-label="Main menu"], button[aria-label="主菜单"]');
@@ -372,26 +401,22 @@
         const row = await waitFor(() => {
             const links = Array.from(document.querySelectorAll('a[href*="/app/"], a[href*="/gem/"]')).filter(l => !l.closest('header'));
             
-            let active = links.find(el => el.getAttribute('aria-current') === 'page' || el.classList.contains('active') || el.classList.contains('selected'));
-            if (active) return active;
-            
-            const pathParts = window.location.pathname.split('/');
+            const pathParts = url.split('/');
             const id = pathParts[pathParts.length - 1]; 
             let match = links.find(el => el.getAttribute('href') && el.getAttribute('href').includes(id));
             if (match) return match;
             
-            return links[0];
+            return null;
         }, 5000);
 
         if (!row) {
-            console.error("[归档报错] 在侧边栏找不到任何对话条目。当前 URL:", window.location.href);
-            throw new Error('在侧边栏找不到任何对话条目');
+            console.error("[归档报错] 在侧边栏找不到指定 URL 的对话条目。URL:", url);
+            throw new Error('在侧边栏找不到指定的对话条目');
         }
         console.log(`[归档追踪 2] 找到侧边栏元素，准备模拟悬停并寻找三个点菜单`);
 
-        // 使用 waitFor 持续尝试 Hover 并寻找按钮，因为 React 渲染菜单有延迟
+        // 使用 waitFor 持续尝试 Hover 并寻找按钮
         const menuButton = await waitFor(() => {
-            // 很多现代框架使用 pointer 系列事件，并且需要坐标
             const hoverEvents = ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'];
             
             [row, row.parentElement].forEach(el => {
@@ -409,7 +434,6 @@
                 }
             });
 
-            // 扩大搜索范围到更外层的父级容器
             const searchArea = row.parentElement?.parentElement || row.parentElement || row;
             const btns = Array.from(searchArea.querySelectorAll('button')).filter(btn =>
                 btn.hasAttribute('aria-haspopup') ||
@@ -435,7 +459,6 @@
             const btns = Array.from(document.querySelectorAll('button[role="menuitem"], li[role="menuitem"], [role="menu"] button, [role="menu"] li, [data-test-id*="notebook"]'));
             for (let i = btns.length - 1; i >= 0; i--) {
                 const b = btns[i];
-                // 后台标签页可能无法精准判断 isVisible，只要出现在 DOM 中并且文本符合即可
                 if ((b.textContent.includes('笔记本') || b.textContent.includes('notebook') || b.textContent.includes('Notebook') || b.textContent.includes('Save')) && !b.closest('nav') && !b.closest('aside')) {
                     return b;
                 }
