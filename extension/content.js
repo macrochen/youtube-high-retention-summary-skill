@@ -139,6 +139,9 @@
                                         }
 
                                         const responseBlocks = Array.from(document.querySelectorAll('message-content, .message-content, .model-response-text, [data-test-id="model-response"], div[class*="message-content"]'));
+                                        
+                                        // 获取用户的提问块，通常包含源链接
+                                        const queryBlocks = Array.from(document.querySelectorAll('user-query, .user-query, [data-test-id="user-query"], div[class*="query-content"], div[class*="user-message"], [data-test-id="chunked-text"]'));
 
                                         if (responseBlocks.length > 0) {
                                             const lastBlock = responseBlocks[responseBlocks.length - 1];
@@ -155,7 +158,25 @@
 
                                                 if (stableCount >= 2) {
                                                     clearInterval(checkInterval);
-                                                    const markdownResult = convertHtmlToMarkdown(lastBlock);
+                                                    
+                                                    let markdownResult = convertHtmlToMarkdown(lastBlock);
+                                                    
+                                                    // 尝试从用户的第一个提问中提取链接
+                                                    let sourceLink = "";
+                                                    if (queryBlocks.length > 0) {
+                                                        const firstQuery = queryBlocks[0].innerText || queryBlocks[0].textContent || "";
+                                                        // 匹配常规的 http/https 链接，排除尾部可能的标点符号
+                                                        const urlMatch = firstQuery.match(/https?:\/\/[^\s)\]'"]+/);
+                                                        if (urlMatch) {
+                                                            sourceLink = urlMatch[0];
+                                                        }
+                                                    }
+                                                    
+                                                    // 如果找到了链接，将它以引用的形式前置在 Markdown 内容的开头
+                                                    if (sourceLink) {
+                                                        markdownResult = `> **📺 源视频链接：** [${sourceLink}](${sourceLink})\n\n---\n\n` + markdownResult;
+                                                    }
+
                                                     resolve(markdownResult);
                                                     return;
                                                 }
