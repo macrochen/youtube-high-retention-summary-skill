@@ -1,3 +1,6 @@
+let isBatching = false;
+const extractionTabs = new Set();
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "downloadMarkdown") {
     const { text, filename } = message;
@@ -23,9 +26,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const mainTabId = sender.tab ? sender.tab.id : null;
     chrome.tabs.create({ url: message.url, active: false }).then(tab => {
        const tabIdToWait = tab.id;
+       extractionTabs.add(tabIdToWait);
+
        const listener = (tabId, removeInfo) => {
           if (tabId === tabIdToWait) {
              chrome.tabs.onRemoved.removeListener(listener);
+             extractionTabs.delete(tabIdToWait);
              if (mainTabId) {
                 chrome.tabs.sendMessage(mainTabId, { action: "extractionDone", url: message.url }).catch(() => {});
              }
@@ -36,6 +42,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
        // Timeout safeguard for the extraction tab
        setTimeout(() => {
           chrome.tabs.onRemoved.removeListener(listener);
+          extractionTabs.delete(tabIdToWait);
           chrome.tabs.remove(tabIdToWait).catch(() => {}); // force close it
           if (mainTabId) {
              chrome.tabs.sendMessage(mainTabId, { action: "extractionDone", url: message.url }).catch(() => {});
@@ -44,8 +51,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     });
     sendResponse({ success: true });
   } else if (message.action === "checkExtractionStatus") {
-    // If it's a new tab opened by startExtractionTab, we tell it to extract
-    sendResponse({ shouldExtract: true });
+    if (sender.tab && extractionTabs.has(sender.tab.id)) {
+      sendResponse({ shouldExtract: true });
+    } else {
+      sendResponse({ shouldExtract: false });
+    }
   }
   return true; // Keep message channel open for async responses if needed
 });
