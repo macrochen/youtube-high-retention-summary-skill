@@ -5,39 +5,171 @@
 
     const urlParams = new URLSearchParams(window.location.search);
     const autoPrompt = urlParams.get('auto_prompt');
-    if (!autoPrompt) return;
+    const isBatchSync = urlParams.get('batch_sync') === 'true';
 
-    const cleanUrl = window.location.origin + window.location.pathname;
-    window.history.replaceState({}, document.title, cleanUrl);
+    // 如果是通过批量任务后台打开的隐藏标签页，走这里：
+    if (isBatchSync) {
+        // 清理 URL 栏看着干净点（虽然是隐藏的）
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+        waitForChatAndProcess();
+        return;
+    }
 
-    let hasSent = false;
+    // 如果是通过 Python 调度自动唤起的生成任务，走这里：
+    if (autoPrompt) {
+        const cleanUrl = window.location.origin + window.location.pathname;
+        window.history.replaceState({}, document.title, cleanUrl);
+        handleAutoPromptTask(autoPrompt);
+        return;
+    }
 
-    // ----- 第一阶段：自动发送 -----
-    const initObserver = new MutationObserver((mutations, obs) => {
-        if (hasSent) return;
+    // 如果既不是自动生成，也不是批量后台，那这就是用户正常浏览的页面。
+    // 我们在这里注入 UI 供用户手动发起批量任务。
+    injectBatchUI();
 
-        const editor = document.querySelector('rich-textarea div[contenteditable="true"], div.ql-editor');
-        const sendButton = document.querySelector('button[aria-label="Send message"], button[aria-label="发送消息"], .send-button');
-
-        if (editor && sendButton && !sendButton.disabled) {
-            obs.disconnect();
-            editor.focus();
-            document.execCommand('insertText', false, autoPrompt);
-
-            let checkReady = setInterval(() => {
-                if (!sendButton.disabled && editor.textContent.includes(autoPrompt.substring(0, 5))) {
-                    clearInterval(checkReady);
-                    hasSent = true;
-                    sendButton.click();
-                    startCompletionObserver();
+    // ==========================================
+    // 逻辑一：批量注入侧边栏 UI
+    // ==========================================
+    function injectBatchUI() {
+        // 监听后台完成消息
+        chrome.runtime.onMessage.addListener((message) => {
+            if (message.action === "batchSyncDone") {
+                const btn = document.getElementById('gemini-automator-batch-btn');
+                if (btn) {
+                    btn.innerHTML = '✅ 处理完成！';
+                    setTimeout(() => {
+                        btn.innerHTML = '📦 批量下载并归档';
+                        btn.disabled = false;
+                        btn.style.background = '#1a73e8';
+                        document.querySelectorAll('.gemini-automator-cb').forEach(cb => cb.checked = false);
+                    }, 3000);
                 }
-            }, 100);
-        }
-    });
+            }
+        });
 
-    initObserver.observe(document.body, { childList: true, subtree: true });
+        // 持续探测并注入 UI
+        setInterval(() => {
+            // 找侧边栏的链接
+            const links = document.querySelectorAll('a[href*="/app/"], a[href*="/gem/"]');
+            links.forEach(link => {
+                // 排除顶部的非聊天历史链接
+                if (link.closest('header')) return;
+                
+                if (!link.querySelector('.gemini-automator-cb')) {
+                    const cb = document.createElement('input');
+                    cb.type = 'checkbox';
+                    cb.className = 'gemini-automator-cb';
+                    cb.style.cssText = 'margin-right: 12px; width: 16px; height: 16px; cursor: pointer; pointer-events: auto; z-index: 999;';
+                    // 防止点复选框导致网页跳转
+                    cb.onclick = (e) => e.stopPropagation();
+                    link.style.display = 'flex';
+                    link.style.alignItems = 'center';
+                    link.insertBefore(cb, link.firstChild);
+                }
+            });
 
-    // ----- 第二阶段：监听生成完毕 -----
+            // 找侧边栏容器注入按钮
+            const sidebar = document.querySelector('nav, aside');
+            if (sidebar && !document.getElementById('gemini-automator-batch-btn')) {
+                const btn = document.createElement('button');
+                btn.id = 'gemini-automator-batch-btn';
+                btn.innerHTML = '📦 批量下载并归档';
+                btn.style.cssText = 'width: 90%; margin: 10px auto; padding: 12px; background: #1a73e8; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; display: block; font-size: 14px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);';
+                btn.onclick = () => {
+                    const checked = document.querySelectorAll('.gemini-automator-cb:checked');
+                    if (checked.length === 0) {
+                        alert('请先勾选要归档的对话（左侧栏复选框）');
+                        return;
+                    }
+                    const urls = Array.from(checked).map(cb => cb.closest('a').href);
+                    chrome.runtime.sendMessage({ action: 'startBatchSync', urls: urls });
+                    btn.innerHTML = `正在后台静默处理 ${urls.length} 个任务...`;
+                    btn.disabled = true;
+                    btn.style.background = '#888';
+                };
+                // 尽量插在顶部显眼的位置
+                const topWrapper = sidebar.querySelector('div') || sidebar;
+                topWrapper.insertBefore(btn, topWrapper.firstChild);
+            }
+        }, 2000);
+    }
+
+    // ==========================================
+    // 逻辑二：处理批量任务的隐藏标签页提取
+    // ==========================================
+    function waitForChatAndProcess() {
+        console.log("🚀 进入批量提取模式，等待聊天内容加载...");
+        
+        // 为了防止页面没加载好提取到空内容，我们要等得久一点，确保 DOM 稳定
+        let stableCount = 0;
+        let lastLength = 0;
+
+        let checkInterval = setInterval(() => {
+            const responseBlocks = Array.from(document.querySelectorAll('message-content, .message-content, .model-response-text, [data-test-id="model-response"], div[class*="message-content"]'));
+            const skeletons = document.querySelectorAll('.skeleton-loader, [role="progressbar"], .loading');
+
+            if (responseBlocks.length > 0 && skeletons.length === 0) {
+                const lastBlock = responseBlocks[responseBlocks.length - 1];
+                const currentText = lastBlock.innerText || lastBlock.textContent;
+                const currentLength = currentText.length;
+
+                if (currentLength > 50) {
+                    if (currentLength === lastLength) {
+                        stableCount++;
+                    } else {
+                        stableCount = 0;
+                        lastLength = currentLength;
+                    }
+
+                    // 连续 2 秒字数不变，且没有 loading 状态，认为加载完成
+                    if (stableCount >= 2) {
+                        clearInterval(checkInterval);
+                        console.log("✅ 检测到历史内容加载完毕，开始提取...");
+                        executePostGenerationTasks(currentText);
+                    }
+                }
+            }
+        }, 1000);
+        
+        // 保底超时机制：如果页面卡死，不要让后台队列一直堵塞
+        setTimeout(() => {
+            clearInterval(checkInterval);
+            console.error("❌ 等待聊天内容超时，可能此对话为空或已失效");
+            chrome.runtime.sendMessage({action: "closeTab"});
+        }, 15000);
+    }
+
+    // ==========================================
+    // 逻辑三：原有的全自动生成逻辑
+    // ==========================================
+    let hasSent = false;
+    function handleAutoPromptTask(prompt) {
+        const initObserver = new MutationObserver((mutations, obs) => {
+            if (hasSent) return;
+
+            const editor = document.querySelector('rich-textarea div[contenteditable="true"], div.ql-editor');
+            const sendButton = document.querySelector('button[aria-label="Send message"], button[aria-label="发送消息"], .send-button');
+
+            if (editor && sendButton && !sendButton.disabled) {
+                obs.disconnect();
+                editor.focus();
+                document.execCommand('insertText', false, prompt);
+
+                let checkReady = setInterval(() => {
+                    if (!sendButton.disabled && editor.textContent.includes(prompt.substring(0, 5))) {
+                        clearInterval(checkReady);
+                        hasSent = true;
+                        sendButton.click();
+                        startCompletionObserver();
+                    }
+                }, 100);
+            }
+        });
+
+        initObserver.observe(document.body, { childList: true, subtree: true });
+    }
+
     function startCompletionObserver() {
         let lastLength = 0;
         let stableCount = 0;
@@ -74,7 +206,9 @@
         }, 5000);
     }
 
-    // ----- 第三阶段：防阻塞流水线 -----
+    // ==========================================
+    // 公共任务：下载 MD 与 归档
+    // ==========================================
     async function executePostGenerationTasks(summaryText) {
         try {
             downloadMarkdown(summaryText);
@@ -88,6 +222,7 @@
             console.error("❌ 归档报错详情:", e);
         }
 
+        // 无论是哪种任务，都发命令关掉自己
         setTimeout(() => {
             chrome.runtime.sendMessage({action: "closeTab"});
         }, 1500);
@@ -99,14 +234,12 @@
         if (lines.length > 0) {
             let firstLine = lines[0].replace(/[#*`]/g, '').trim();
             if (firstLine.length > 0 && firstLine.length < 50) {
-                // 恢复稍微宽松的过滤，因为 Chrome 插件天然支持建文件夹
                 title = firstLine.replace(/[\/\\:*?"<>|]/g, ' ').trim();
             }
         }
 
         console.log(`[下载追踪] 准备发送消息给 Background 脚本下载: youtube-summeries/${title}.md`);
         
-        // 调用 Chrome 插件独有的原生下载接口，100% 能建文件夹
         chrome.runtime.sendMessage({
             action: "downloadMarkdown",
             text: text,
@@ -115,7 +248,6 @@
     }
 
     // ---------- UI 自动化助手函数 ----------
-
     function isVisible(el) {
         if (!el) return false;
         const style = window.getComputedStyle(el);
@@ -151,6 +283,14 @@
 
     async function moveCurrentToNotebook(notebookName) {
         console.log(`[归档追踪 1] 寻找侧边栏当前对话... 当前路径=${window.location.pathname}`);
+        
+        // 【防闪退保护】确保侧边栏已展开
+        const sidebarToggleButton = document.querySelector('button[aria-label="Main menu"], button[aria-label="主菜单"]');
+        const sidebar = document.querySelector('nav, aside');
+        if (sidebar && !isVisible(sidebar) && sidebarToggleButton) {
+            simulateFullClick(sidebarToggleButton);
+            await new Promise(r => setTimeout(r, 500));
+        }
         
         const row = await waitFor(() => {
             const links = Array.from(document.querySelectorAll('a[href*="/app/"], a[href*="/gem/"]')).filter(l => !l.closest('header'));
