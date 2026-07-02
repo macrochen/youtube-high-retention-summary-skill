@@ -38,7 +38,7 @@
                     btn.innerHTML = '✅ 处理完成！';
                     setTimeout(() => {
                         btn.innerHTML = '📦 批量归档选中的对话';
-                        btn.disabled = false;
+                        btn.style.pointerEvents = 'auto';
                         btn.style.background = '#1a73e8';
                         document.querySelectorAll('.gemini-automator-cb').forEach(cb => cb.checked = false);
                     }, 3000);
@@ -85,32 +85,62 @@
                     link.style.alignItems = 'center';
                     link.prepend(cb);
                 });
-            }
 
-            // 使用悬浮按钮 (Floating Action Button) 避免被侧边栏的 CSS 或 React 刷新给吞掉
-            if (!document.getElementById('gemini-automator-batch-btn')) {
-                const btn = document.createElement('button');
-                btn.id = 'gemini-automator-batch-btn';
-                btn.innerHTML = '📦 批量归档选中的对话';
-                btn.style.cssText = 'position: fixed; bottom: 20px; left: 20px; z-index: 999999; padding: 12px 20px; background: #1a73e8; color: white; border: none; border-radius: 24px; cursor: pointer; font-weight: bold; font-size: 14px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: all 0.3s ease;';
-                
-                // 鼠标悬停特效
-                btn.onmouseenter = () => btn.style.transform = 'scale(1.05)';
-                btn.onmouseleave = () => btn.style.transform = 'scale(1)';
+                // 注入“批量归档选中的对话”按钮到底部（或搜索栏下方）
+                if (!document.getElementById('gemini-batch-btn-container') && chatLinks.length > 0) {
+                    // 找列表滚动容器
+                    const listContainer = chatLinks[0].closest('div[role="list"], ul, [data-test-id="recent-chats-list"]') || chatLinks[0].parentElement.parentElement;
+                    if (listContainer) {
+                        const btnContainer = document.createElement('div');
+                        btnContainer.id = 'gemini-batch-btn-container';
+                        btnContainer.style.cssText = `
+                            position: sticky;
+                            top: 0;
+                            z-index: 99;
+                            padding: 8px 12px 12px 12px;
+                            background: var(--gem-sys-color--surface, var(--md-sys-color-surface, #1e1f20));
+                        `;
 
-                btn.onclick = () => {
-                    const checked = document.querySelectorAll('.gemini-automator-cb:checked');
-                    if (checked.length === 0) {
-                        alert('请先在左侧边栏勾选要归档的历史对话！');
-                        return;
+                        const btn = document.createElement('button');
+                        btn.id = 'gemini-automator-batch-btn';
+                        btn.innerHTML = '📦 批量归档选中的对话';
+                        btn.style.cssText = `
+                            width: 100%;
+                            background: #1a73e8;
+                            color: white;
+                            border: none;
+                            border-radius: 8px;
+                            padding: 10px 16px;
+                            font-size: 14px;
+                            font-weight: 500;
+                            cursor: pointer;
+                            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+                            transition: all 0.2s;
+                        `;
+
+                        btn.onmouseover = () => btn.style.background = '#1557b0';
+                        btn.onmouseout = () => btn.style.background = '#1a73e8';
+
+                        btn.onclick = async () => {
+                            const checkboxes = document.querySelectorAll('.gemini-automator-cb:checked');
+                            if (checkboxes.length === 0) {
+                                alert('请先勾选需要归档的对话！');
+                                return;
+                            }
+
+                            const urls = Array.from(checkboxes).map(cb => cb.closest('a').href);
+                            
+                            btn.innerHTML = '⏳ 正在后台提取并归档中...';
+                            btn.style.background = '#5f6368';
+                            btn.style.pointerEvents = 'none';
+
+                            chrome.runtime.sendMessage({ action: "startBatchSync", urls: urls });
+                        };
+
+                        btnContainer.appendChild(btn);
+                        listContainer.prepend(btnContainer);
                     }
-                    const urls = Array.from(checked).map(cb => cb.closest('a').href);
-                    chrome.runtime.sendMessage({ action: 'startBatchSync', urls: urls });
-                    btn.innerHTML = `正在后台静默处理 ${urls.length} 个任务...`;
-                    btn.disabled = true;
-                    btn.style.background = '#888';
-                };
-                document.body.appendChild(btn);
+                }
             }
         }, 2000);
     }
