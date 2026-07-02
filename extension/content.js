@@ -428,6 +428,88 @@
         });
     }
 
+    // ---------- HTML 转 Markdown 解析器 ----------
+    function convertHtmlToMarkdown(element) {
+        let markdown = "";
+        
+        if (element.nodeType === Node.ELEMENT_NODE) {
+            const style = window.getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden') return "";
+        }
+
+        const children = element.childNodes;
+        for (let i = 0; i < children.length; i++) {
+            const node = children[i];
+            
+            if (node.nodeType === Node.TEXT_NODE) {
+                markdown += node.textContent;
+            } else if (node.nodeType === Node.ELEMENT_NODE) {
+                const tag = node.tagName.toLowerCase();
+                
+                if (tag === 'h1') markdown += '\n# ' + convertHtmlToMarkdown(node).trim() + '\n\n';
+                else if (tag === 'h2') markdown += '\n## ' + convertHtmlToMarkdown(node).trim() + '\n\n';
+                else if (tag === 'h3') markdown += '\n### ' + convertHtmlToMarkdown(node).trim() + '\n\n';
+                else if (tag === 'h4') markdown += '\n#### ' + convertHtmlToMarkdown(node).trim() + '\n\n';
+                else if (tag === 'p') markdown += convertHtmlToMarkdown(node).trim() + '\n\n';
+                else if (tag === 'ul') markdown += '\n' + convertHtmlToMarkdown(node) + '\n';
+                else if (tag === 'ol') {
+                    let idx = 1;
+                    Array.from(node.children).forEach(child => {
+                        if (child.tagName.toLowerCase() === 'li') {
+                            markdown += `${idx++}. ` + convertHtmlToMarkdown(child).trim() + '\n';
+                        }
+                    });
+                    markdown += '\n';
+                }
+                else if (tag === 'li' && node.parentNode && node.parentNode.tagName.toLowerCase() === 'ul') {
+                    markdown += '- ' + convertHtmlToMarkdown(node).trim() + '\n';
+                }
+                else if (tag === 'strong' || tag === 'b') markdown += '**' + convertHtmlToMarkdown(node) + '**';
+                else if (tag === 'em' || tag === 'i') markdown += '*' + convertHtmlToMarkdown(node) + '*';
+                else if (tag === 'code') {
+                    if (node.parentNode && node.parentNode.tagName.toLowerCase() === 'pre') {
+                        markdown += convertHtmlToMarkdown(node);
+                    } else {
+                        markdown += '`' + convertHtmlToMarkdown(node) + '`';
+                    }
+                }
+                else if (tag === 'pre') {
+                    let lang = '';
+                    const codeNode = node.querySelector('code');
+                    if (codeNode && codeNode.className) {
+                        const match = codeNode.className.match(/language-(\w+)/);
+                        if (match) lang = match[1];
+                    }
+                    markdown += '\n```' + lang + '\n' + convertHtmlToMarkdown(node).trim() + '\n```\n\n';
+                }
+                else if (tag === 'a') markdown += '[' + convertHtmlToMarkdown(node) + '](' + node.href + ')';
+                else if (tag === 'br') markdown += '\n';
+                else if (tag === 'table') {
+                    markdown += '\n' + convertTableToMarkdown(node) + '\n';
+                }
+                else {
+                    markdown += convertHtmlToMarkdown(node);
+                }
+            }
+        }
+        
+        return markdown.replace(/\n{3,}/g, '\n\n').trim();
+    }
+
+    function convertTableToMarkdown(tableNode) {
+        let md = '';
+        const rows = tableNode.querySelectorAll('tr');
+        rows.forEach((row, rowIndex) => {
+            const cells = Array.from(row.querySelectorAll('th, td'));
+            md += '| ' + cells.map(cell => convertHtmlToMarkdown(cell).trim().replace(/\|/g, '\\|')).join(' | ') + ' |\n';
+            
+            if (rowIndex === 0) {
+                md += '| ' + cells.map(() => '---').join(' | ') + ' |\n';
+            }
+        });
+        return md;
+    }
+
     // ---------- UI 自动化助手函数 ----------
     function isVisible(el) {
         if (!el) return false;
