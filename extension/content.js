@@ -124,8 +124,10 @@
         // 为了防止页面没加载好提取到空内容，我们要等得久一点，确保 DOM 稳定
         let stableCount = 0;
         let lastLength = 0;
+        let totalWaitMs = 0;
 
         let checkInterval = setInterval(() => {
+            totalWaitMs += 1000;
             const responseBlocks = Array.from(document.querySelectorAll('message-content, .message-content, .model-response-text, [data-test-id="model-response"], div[class*="message-content"]'));
 
             if (responseBlocks.length > 0) {
@@ -141,22 +143,22 @@
                         lastLength = currentLength;
                     }
 
-                    // 连续 2 秒字数不变，且没有 loading 状态，认为加载完成
                     if (stableCount >= 2) {
                         clearInterval(checkInterval);
                         console.log("✅ 检测到历史内容加载完毕，开始提取...");
                         executePostGenerationTasks(currentText);
+                        return;
                     }
                 }
             }
+            
+            // 保底超时机制：如果 30 秒还没加载完，大概率真卡死了
+            if (totalWaitMs >= 30000) {
+                clearInterval(checkInterval);
+                console.error("❌ 等待聊天内容超时 (30s)，可能此对话为空、网络太慢或已失效");
+                chrome.runtime.sendMessage({action: "closeTab"});
+            }
         }, 1000);
-        
-        // 保底超时机制：如果页面卡死，不要让后台队列一直堵塞
-        setTimeout(() => {
-            clearInterval(checkInterval);
-            console.error("❌ 等待聊天内容超时，可能此对话为空或已失效");
-            chrome.runtime.sendMessage({action: "closeTab"});
-        }, 15000);
     }
 
     // ==========================================
@@ -248,13 +250,13 @@
     }
 
     function downloadMarkdown(text) {
-        let title = "youtube_summary_" + new Date().getTime();
-        const lines = text.trim().split('\n');
-        if (lines.length > 0) {
-            let firstLine = lines[0].replace(/[#*`]/g, '').trim();
-            if (firstLine.length > 0 && firstLine.length < 50) {
-                title = firstLine.replace(/[\/\\:*?"<>|]/g, ' ').trim();
-            }
+        let title = document.title || "youtube_summary_" + new Date().getTime();
+        // 清理掉 Gemini 默认加的后缀，以及不合法的文件名字符
+        title = title.replace(' - Google Gemini', '').replace(' - Gemini', '').replace(/[\/\\:*?"<>|]/g, ' ').trim();
+        
+        // 保底：如果标题太长，截取前 100 个字符
+        if (title.length > 100) {
+            title = title.substring(0, 100).trim();
         }
 
         console.log(`[下载追踪] 准备发送消息给 Background 脚本下载: youtube-summeries/${title}.md`);
@@ -328,20 +330,24 @@
         if (!row) throw new Error('在侧边栏找不到任何对话条目');
         console.log(`[归档追踪 2] 找到侧边栏元素，准备模拟悬停并寻找三个点菜单`);
 
-        [row, row.parentElement].forEach(el => {
-            if (el) {
-                el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-                el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-            }
-        });
+        // 使用 waitFor 持续尝试 Hover 并寻找按钮，因为 React 渲染菜单有延迟
+        const menuButton = await waitFor(() => {
+            [row, row.parentElement].forEach(el => {
+                if (el) {
+                    el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+                    el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+                }
+            });
 
-        const menuButtons = Array.from(row.parentElement.querySelectorAll('button')).filter(btn =>
-            btn.hasAttribute('aria-haspopup') ||
-            (btn.getAttribute('aria-label') || '').includes('选项') ||
-            (btn.getAttribute('data-test-id') || '').includes('menu')
-        );
-        const menuButton = menuButtons.pop();
-        if (!menuButton) throw new Error('找不到侧边栏的三个点菜单按钮');
+            const btns = Array.from(row.parentElement.querySelectorAll('button')).filter(btn =>
+                btn.hasAttribute('aria-haspopup') ||
+                (btn.getAttribute('aria-label') || '').includes('选项') ||
+                (btn.getAttribute('data-test-id') || '').includes('menu')
+            );
+            return btns.pop() || null;
+        }, 8000);
+
+        if (!menuButton) throw new Error('持续 8 秒仍找不到侧边栏的三个点菜单按钮');
 
         menuButton.style.visibility = 'visible';
         menuButton.style.opacity = '1';

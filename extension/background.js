@@ -62,7 +62,7 @@ async function processBatchUrls(urls, originalTabId) {
           extractionTabs.delete(tab.id);
           chrome.tabs.remove(tab.id).catch(() => {});
           resolve();
-        }, 30000); // 30s timeout per tab max
+        }, 60000); // 60s timeout per tab max
       });
       
       await new Promise(r => setTimeout(r, 1500)); // anti-spam
