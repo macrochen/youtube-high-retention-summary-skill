@@ -40,7 +40,9 @@ async function processBatchUrls(urls, originalTabId) {
   isBatching = true;
   try {
     for (const url of urls) {
-      const tab = await chrome.tabs.create({ url: url, active: false });
+      // 必须 active: true，否则 Chrome 后台标签页会暂停 requestAnimationFrame，
+      // 导致 Gemini 的 Angular/React 框架根本不渲染聊天内容的 DOM 和侧边栏 UI。
+      const tab = await chrome.tabs.create({ url: url, active: true });
       extractionTabs.add(tab.id);
       
       // Wait for it to close
