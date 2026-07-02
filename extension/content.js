@@ -155,7 +155,8 @@
 
                                                 if (stableCount >= 2) {
                                                     clearInterval(checkInterval);
-                                                    resolve(currentText);
+                                                    const markdownResult = convertHtmlToMarkdown(lastBlock);
+                                                    resolve(markdownResult);
                                                     return;
                                                 }
                                             }
@@ -345,7 +346,7 @@
                         if (stableCount >= 3) {
                             clearInterval(checkInterval);
                             console.log("✅ 检测到生成完毕，开始执行后续动作。");
-                            executePostGenerationTasks(currentText);
+                            executePostGenerationTasks(convertHtmlToMarkdown(lastBlock));
                         }
                     }
                 }
