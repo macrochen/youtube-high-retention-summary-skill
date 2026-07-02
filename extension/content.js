@@ -259,10 +259,27 @@
     }
 
     function downloadMarkdown(text) {
-        let title = document.title || "youtube_summary_" + new Date().getTime();
+        let title = document.title || "";
         // 清理掉 Gemini 默认加的后缀，以及不合法的文件名字符
         title = title.replace(' - Google Gemini', '').replace(' - Gemini', '').replace(/[\/\\:*?"<>|]/g, ' ').trim();
         
+        // Fallback (降级) 机制：如果页面没加载完标题，document.title 只是 "Google Gemini"，
+        // 我们就降级去提取文本的正文第一行作为标题。
+        if (!title || title.toLowerCase() === 'google gemini' || title.toLowerCase() === 'gemini') {
+            console.log("⚠️ 网页标题未加载完成，启动 Fallback 机制提取正文标题...");
+            const lines = text.trim().split('\n');
+            if (lines.length > 0) {
+                let firstLine = lines[0].replace(/[#*`]/g, '').trim();
+                if (firstLine.length > 0 && firstLine.length < 50) {
+                    title = firstLine.replace(/[\/\\:*?"<>|]/g, ' ').trim();
+                } else {
+                    title = "youtube_summary_" + new Date().getTime();
+                }
+            } else {
+                title = "youtube_summary_" + new Date().getTime();
+            }
+        }
+
         // 保底：如果标题太长，截取前 100 个字符
         if (title.length > 100) {
             title = title.substring(0, 100).trim();
@@ -341,14 +358,27 @@
 
         // 使用 waitFor 持续尝试 Hover 并寻找按钮，因为 React 渲染菜单有延迟
         const menuButton = await waitFor(() => {
-            [row, row.parentElement].forEach(el => {
+            // 很多现代框架使用 pointer 系列事件，并且需要坐标
+            const hoverEvents = ['pointerover', 'pointerenter', 'mouseover', 'mouseenter', 'mousemove'];
+            
+            [activeLink, row, row.parentElement].forEach(el => {
                 if (el) {
-                    el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
-                    el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+                    const rect = el.getBoundingClientRect();
+                    hoverEvents.forEach(type => {
+                        el.dispatchEvent(new MouseEvent(type, { 
+                            bubbles: true, 
+                            cancelable: true,
+                            view: window,
+                            clientX: rect.left + (rect.width / 2) || 0,
+                            clientY: rect.top + (rect.height / 2) || 0
+                        }));
+                    });
                 }
             });
 
-            const btns = Array.from(row.parentElement.querySelectorAll('button')).filter(btn =>
+            // 扩大搜索范围到更外层的父级容器
+            const searchArea = row.parentElement?.parentElement || row.parentElement || row;
+            const btns = Array.from(searchArea.querySelectorAll('button')).filter(btn =>
                 btn.hasAttribute('aria-haspopup') ||
                 (btn.getAttribute('aria-label') || '').includes('选项') ||
                 (btn.getAttribute('data-test-id') || '').includes('menu')
