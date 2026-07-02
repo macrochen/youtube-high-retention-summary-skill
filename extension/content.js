@@ -114,48 +114,101 @@
 
                             const urls = Array.from(checkboxes).map(cb => cb.closest('a').href);
                             
-                            btn.innerHTML = '⏳ 正在后台提取并归档中...';
+                            btn.innerHTML = '⏳ 正在当前页面按序提取并归档中...';
                             btn.style.background = '#5f6368';
                             btn.style.pointerEvents = 'none';
 
+                            // 帮助函数：等待 DOM 渲染出新聊天的聊天内容
+                            const waitAndExtractChatContent = async (targetId) => {
+                                return new Promise((resolve) => {
+                                    let stableCount = 0;
+                                    let lastLength = 0;
+                                    let totalWaitMs = 0;
+                                    
+                                    let checkInterval = setInterval(() => {
+                                        totalWaitMs += 1000;
+                                        
+                                        // 确保 URL 已经跳转到了目标
+                                        if (!window.location.href.includes(targetId)) {
+                                            if (totalWaitMs >= 15000) {
+                                                clearInterval(checkInterval);
+                                                console.error("❌ 路由跳转超时", window.location.href, targetId);
+                                                resolve(null);
+                                            }
+                                            return;
+                                        }
+
+                                        const responseBlocks = Array.from(document.querySelectorAll('message-content, .message-content, .model-response-text, [data-test-id="model-response"], div[class*="message-content"]'));
+
+                                        if (responseBlocks.length > 0) {
+                                            const lastBlock = responseBlocks[responseBlocks.length - 1];
+                                            const currentText = lastBlock.innerText || lastBlock.textContent;
+                                            const currentLength = currentText.length;
+
+                                            if (currentLength > 50) {
+                                                if (currentLength === lastLength) {
+                                                    stableCount++;
+                                                } else {
+                                                    stableCount = 0;
+                                                    lastLength = currentLength;
+                                                }
+
+                                                if (stableCount >= 2) {
+                                                    clearInterval(checkInterval);
+                                                    resolve(currentText);
+                                                    return;
+                                                }
+                                            }
+                                        }
+                                        
+                                        if (totalWaitMs >= 15000) {
+                                            clearInterval(checkInterval);
+                                            console.error("❌ 提取聊天内容超时或页面结构不符");
+                                            resolve(null);
+                                        }
+                                    }, 1000);
+                                });
+                            };
+
                             for (let i = 0; i < urls.length; i++) {
-                                const url = urls[i];
+                                const targetUrl = urls[i];
                                 btn.innerHTML = `⏳ 处理中 (${i + 1}/${urls.length})...`;
-                                console.log(`[主控室] 开始处理: ${url}`);
+                                console.log(`[主控室] 开始处理: ${targetUrl}`);
                                 
                                 try {
-                                    // 1. 发送消息给后台，打开一个隐藏标签页只负责下载 Markdown
-                                    const extractionSuccess = await new Promise(resolve => {
-                                        chrome.runtime.sendMessage({ action: "startExtractionTab", url: url }, response => {
-                                            if (response && response.success) {
-                                                console.log("[主控室] 后台提取标签页已启动");
-                                            }
-                                        });
+                                    // 1. 在侧边栏找到这个 a 标签，触发 Angular 路由跳转
+                                    const pathParts = targetUrl.split('/');
+                                    const targetId = pathParts[pathParts.length - 1].split('?')[0]; 
+                                    
+                                    const allLinks = document.querySelectorAll('a[href*="/app/"], a[href*="/gem/"]');
+                                    const linkEl = Array.from(allLinks).find(el => el.getAttribute('href') && el.getAttribute('href').includes(targetId));
+                                    
+                                    if (!linkEl) {
+                                        console.error(`[主控室] 在侧边栏找不到 ID 为 ${targetId} 对应的链接`);
+                                        continue;
+                                    }
+                                    
+                                    console.log(`[主控室] 模拟点击侧边栏链接: ${linkEl.href}`);
+                                    // 不要直接 href 赋值，使用原生 click() 触发 Angular Router 跳转！
+                                    linkEl.click();
+                                    
+                                    // 2. 等待路由跳转和内容加载，并提取正文
+                                    const extractedText = await waitAndExtractChatContent(targetId);
+                                    
+                                    // 3. 下载与归档
+                                    if (extractedText) {
+                                        console.log(`[主控室] 内容提取成功，开始下载 MD`);
+                                        downloadMarkdown(extractedText);
                                         
-                                        // 等待 extractionDone 消息
-                                        const listener = (msg) => {
-                                            if (msg.action === "extractionDone" && msg.url === url) {
-                                                chrome.runtime.onMessage.removeListener(listener);
-                                                resolve(true);
-                                            }
-                                        };
-                                        chrome.runtime.onMessage.addListener(listener);
-                                        
-                                        // 超时兜底 60s
-                                        setTimeout(() => {
-                                            chrome.runtime.onMessage.removeListener(listener);
-                                            console.error("[主控室] 下载任务超时");
-                                            resolve(false);
-                                        }, 60000);
-                                    });
-
-                                    // 2. 下载完成后，在当前主页面进行归档操作
-                                    if (extractionSuccess) {
-                                        console.log(`[主控室] 下载完成，开始在本页面进行归档: ${url}`);
-                                        await moveSpecificUrlToNotebook(url, 'youtube-summeries');
+                                        console.log(`[主控室] 开始在侧边栏对当前会话进行归档`);
+                                        // 传当前的真实 URL 进去归档，因为刚才模拟点击后，如果带有 Gem 参数，
+                                        // URL 可能会从 /app/xx 变成 /gem/xx/xx，用 window.location.href 最稳妥
+                                        await moveSpecificUrlToNotebook(window.location.href, 'youtube-summeries');
+                                    } else {
+                                        console.error(`[主控室] 跳过 ${targetUrl}：提取内容失败`);
                                     }
                                 } catch(e) {
-                                    console.error(`[主控室] 处理 ${url} 失败:`, e);
+                                    console.error(`[主控室] 处理 ${targetUrl} 失败:`, e);
                                 }
                                 
                                 // 缓冲间隔
@@ -402,7 +455,7 @@
             const links = Array.from(document.querySelectorAll('a[href*="/app/"], a[href*="/gem/"]')).filter(l => !l.closest('header'));
             
             const pathParts = url.split('/');
-            const id = pathParts[pathParts.length - 1]; 
+            const id = pathParts[pathParts.length - 1].split('?')[0]; 
             let match = links.find(el => el.getAttribute('href') && el.getAttribute('href').includes(id));
             if (match) return match;
             
@@ -413,7 +466,9 @@
             console.error("[归档报错] 在侧边栏找不到指定 URL 的对话条目。URL:", url);
             throw new Error('在侧边栏找不到指定的对话条目');
         }
-        console.log(`[归档追踪 2] 找到侧边栏元素，准备模拟悬停并寻找三个点菜单`);
+        
+        const rowName = row.innerText || row.textContent || "未知名称";
+        console.log(`[归档追踪 2] 找到侧边栏元素，对话名称: "${rowName.trim()}"，准备模拟悬停并寻找三个点菜单`);
 
         // 使用 waitFor 持续尝试 Hover 并寻找按钮
         const menuButton = await waitFor(() => {
@@ -434,13 +489,38 @@
                 }
             });
 
-            const searchArea = row.parentElement?.parentElement || row.parentElement || row;
+            // 使用基于 Y 轴几何距离的查找法，防止定位到其他对话的菜单
+            const rowRect = row.getBoundingClientRect();
+            const rowCenterY = rowRect.top + (rowRect.height / 2);
+            
+            // 在整个侧边栏区域搜索
+            const searchArea = row.closest('nav, aside, ul') || document.body;
             const btns = Array.from(searchArea.querySelectorAll('button')).filter(btn =>
                 btn.hasAttribute('aria-haspopup') ||
                 (btn.getAttribute('aria-label') || '').includes('选项') ||
                 (btn.getAttribute('data-test-id') || '').includes('menu')
             );
-            return btns.pop() || null;
+            
+            if (btns.length === 0) return null;
+
+            let closestBtn = btns[0];
+            let minDiff = Infinity;
+            
+            btns.forEach(btn => {
+                const btnRect = btn.getBoundingClientRect();
+                const btnCenterY = btnRect.top + (btnRect.height / 2);
+                const diff = Math.abs(btnCenterY - rowCenterY);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestBtn = btn;
+                }
+            });
+            
+            // 只要高度相差不超过 30px，就认为是正确的按钮
+            if (minDiff < 30) {
+                return closestBtn;
+            }
+            return null;
         }, 8000);
 
         if (!menuButton) {
