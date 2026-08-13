@@ -1,6 +1,6 @@
 ---
 name: youtube-high-retention-summary-skill
-description: 将指定的 YouTube 视频链接传递给用户自定义的 Gemini Gem，配合油猴脚本全自动处理；同时也支持传入 JSON 队列文件进行防封号的慢速批量调用。
+description: 将指定的 YouTube 视频链接传递给用户自定义的 Gemini Gem，配合 Chrome 插件全自动处理；同时也支持传入 JSON 队列文件进行防封号的慢速批量调用。
 ---
 
 # youtube-high-retention-summary-skill
@@ -19,17 +19,17 @@ description: 将指定的 YouTube 视频链接传递给用户自定义的 Gemini
    ```bash
    open "https://gemini.google.com/u/0/gem/df372934aec1?auto_prompt=<YouTube_URL>"
    ```
-3. 告知用户页面已打开，油猴脚本已接管。
+3. 告知用户页面已打开，Chrome 插件已接管。
 
 ### 场景二：批量慢速队列（传入 JSON 文件）
 1. 如果用户输入中包含 JSON 文件的绝对或相对路径（如 `youtube_batch_xxx.json`），请将该路径解析为绝对路径 `$JSON_PATH`。
-2. 调用随 Skill 附带的批处理脚本启动慢速循环：
+2. 调用随 Skill 附带的批处理脚本启动慢速循环（支持可选参数传入每次任务的间隔秒数，默认 15 秒）：
    ```bash
-   python3 ~/.agents/skills/youtube-high-retention-summary-skill/scripts/batch_processor.py "$JSON_PATH"
+   python3 ~/.agents/skills/youtube-high-retention-summary-skill/scripts/batch_processor.py "$JSON_PATH" [间隔秒数]
    ```
-3. 这个脚本会解析 JSON，并且每发送一个任务就会休眠 5 分钟（`sleep 300`），你需要耐心等待（或者把任务放到后台异步运行，但只要提示用户队列已启动即可，终端日志会持续打印）。
+3. 这个脚本会解析 JSON，每发送一个任务后进入动态休眠（默认为 15 秒），你可以根据网络情况调整执行时的间隔参数（例如 `30` 代表 30 秒）。你需要耐心等待（或者把任务放到后台异步运行，但只要提示用户队列已启动即可，终端日志会持续打印）。
 
 ---
 
 ## 核心设计理念
-本 Skill 完全摒弃了后端抓取，而是通过 `URL Parameter` 传参配合浏览器端的**油猴脚本 (Tampermonkey)**，实现对专属 Gemini Gem 的无缝调用。针对批量任务，引入了“本地间隔唤醒+浏览器原生调度”的策略，最大限度保证安全性和防风控。
+本 Skill 完全摒弃了后端抓取，而是通过 `URL Parameter` 传参配合浏览器端的**Chrome 原生插件**，实现对专属 Gemini Gem 的无缝调用。针对批量任务，引入了“本地间隔唤醒+浏览器原生调度”的策略，最大限度保证安全性和防风控。

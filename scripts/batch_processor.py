@@ -7,10 +7,17 @@ from urllib.parse import quote
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python batch_processor.py <path_to_json>")
+        print("Usage: python batch_processor.py <path_to_json> [sleep_interval_in_seconds]")
         sys.exit(1)
 
     json_path = sys.argv[1]
+    
+    sleep_time = 15
+    if len(sys.argv) >= 3:
+        try:
+            sleep_time = int(sys.argv[2])
+        except ValueError:
+            print("⚠️ 无效的休眠时间，将使用默认的 15 秒。")
     
     if not os.path.exists(json_path):
         print(f"File not found: {json_path}")
@@ -69,8 +76,7 @@ def main():
         has_more = any(not v.get('processed', False) for v in videos)
         
         if has_more:
-            sleep_time = 60 # 60秒 = 1分钟
-            print(f"    ⏳ 任务已发送给 Gemini。当前终端已进入休眠 ({sleep_time // 60} 分钟以防被频控拦截)。")
+            print(f"    ⏳ 任务已发送给 Gemini。当前终端已进入休眠 ({sleep_time} 秒以防被频控拦截)。")
             print(f"    (提示: 即使你现在关闭终端或按 Ctrl+C，下次重新执行也能断点续传)\n")
             
             try:

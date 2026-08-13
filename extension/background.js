@@ -13,7 +13,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     chrome.downloads.download({
       url: url,
-      filename: `youtube-summeries/${filename}.md`,
+      filename: `youtube-summaries/${filename}.md`,
       saveAs: false
     });
     sendResponse({ success: true });

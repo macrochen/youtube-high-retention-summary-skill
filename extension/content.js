@@ -217,15 +217,12 @@
                                     // 2. 等待路由跳转和内容加载，并提取正文
                                     const extractedText = await waitAndExtractChatContent(targetId);
                                     
-                                    // 3. 下载与归档
+                                    // 3. 归档
                                     if (extractedText) {
-                                        console.log(`[主控室] 内容提取成功，开始下载 MD`);
-                                        downloadMarkdown(extractedText);
-                                        
                                         console.log(`[主控室] 开始在侧边栏对当前会话进行归档`);
                                         // 传当前的真实 URL 进去归档，因为刚才模拟点击后，如果带有 Gem 参数，
                                         // URL 可能会从 /app/xx 变成 /gem/xx/xx，用 window.location.href 最稳妥
-                                        await moveSpecificUrlToNotebook(window.location.href, 'youtube-summeries');
+                                        await moveSpecificUrlToNotebook(window.location.href, 'youtube-summaries');
                                     } else {
                                         console.error(`[主控室] 跳过 ${targetUrl}：提取内容失败`);
                                     }
@@ -274,7 +271,7 @@
                 const currentText = lastBlock.innerText || lastBlock.textContent;
                 const currentLength = currentText.length;
 
-                if (currentLength > 50) {
+                if (currentLength > 200) {
                     if (currentLength === lastLength) {
                         stableCount++;
                     } else {
@@ -285,7 +282,7 @@
                     if (stableCount >= 2) {
                         clearInterval(checkInterval);
                         console.log("✅ 检测到历史内容加载完毕，开始提取...");
-                        executePostGenerationTasks(currentText);
+                        executePostGenerationTasks(currentText, 'extract');
                         return;
                     }
                 }
@@ -356,7 +353,7 @@
                     const currentText = lastBlock.innerText || lastBlock.textContent;
                     const currentLength = currentText.length;
 
-                    if (currentLength > 50 && stopButtons.length === 0) {
+                    if (currentLength > 200 && stopButtons.length === 0) {
                         if (currentLength === lastLength) {
                             stableCount++;
                         } else {
@@ -367,7 +364,7 @@
                         if (stableCount >= 3) {
                             clearInterval(checkInterval);
                             console.log("✅ 检测到生成完毕，开始执行后续动作。");
-                            executePostGenerationTasks(convertHtmlToMarkdown(lastBlock));
+                            executePostGenerationTasks(convertHtmlToMarkdown(lastBlock), 'generate');
                         }
                     }
                 }
@@ -378,18 +375,25 @@
     // ==========================================
     // 公共任务：下载 MD 与 归档
     // ==========================================
-    async function executePostGenerationTasks(summaryText) {
+    async function executePostGenerationTasks(summaryText, mode) {
         try {
             downloadMarkdown(summaryText);
         } catch (e) {
             console.error("❌ MD 下载报错:", e);
         }
 
-        // 提取模式下，不再在此页面进行归档操作，主控页面会接管归档。
-        // 直接关闭自己，触发主控页面的 extractionDone 事件。
-        setTimeout(() => {
-            chrome.runtime.sendMessage({action: "closeTab"});
-        }, 1500);
+        if (mode === 'generate') {
+            console.log("🛑 总结与下载完成，准备关闭当前标签页以释放资源...");
+            setTimeout(() => {
+                chrome.runtime.sendMessage({action: "closeTab"});
+            }, 1500);
+        } else {
+            // 'extract' 模式下，不再在此页面进行归档操作，主控页面会接管归档。
+            // 直接关闭自己，触发主控页面的 extractionDone 事件。
+            setTimeout(() => {
+                chrome.runtime.sendMessage({action: "closeTab"});
+            }, 1500);
+        }
     }
 
     function downloadMarkdown(text) {
@@ -419,7 +423,7 @@
             title = title.substring(0, 100).trim();
         }
 
-        console.log(`[下载追踪] 准备发送消息给 Background 脚本下载: youtube-summeries/${title}.md`);
+        console.log(`[下载追踪] 准备发送消息给 Background 脚本下载: youtube-summaries/${title}.md`);
         
         chrome.runtime.sendMessage({
             action: "downloadMarkdown",
